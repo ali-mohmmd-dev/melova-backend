@@ -189,3 +189,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ---------------------------------------------------------------------------
 RAZOR_KEY_ID = os.environ.get("RAZOR_KEY_ID", "your_key_id")
 RAZOR_KEY_SECRET = os.environ.get("RAZOR_KEY_SECRET", "your_key_secret")
+
+# ---------------------------------------------------------------------------
+# Media files (Local Storage)
+# ---------------------------------------------------------------------------
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"

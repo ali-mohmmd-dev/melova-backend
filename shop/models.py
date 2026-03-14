@@ -1,11 +1,11 @@
 from django.db import models
 
+
 class Product(models.Model):
     name = models.CharField(max_length=255)
     intro = models.TextField()
     description = models.TextField()
-    image = models.CharField(max_length=500, null=True, blank=True)
-    price = models.DecimalField(max_digits=10, decimal_places=2)
+    image = models.FileField(upload_to="products/", null=True, blank=True)
 
     def __str__(self):
         return self.name
@@ -29,13 +29,17 @@ class Customer(models.Model):
 class Variant(models.Model):
     product = models.ForeignKey(Product, related_name='variants', on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
-    gram = models.IntegerField()
+    gram = models.IntegerField()  # weight in grams
     price = models.DecimalField(max_digits=10, decimal_places=2)
-    image = models.CharField(max_length=500, null=True, blank=True)
-
+    image = models.FileField(upload_to="variants/", null=True, blank=True)
 
     def __str__(self):
         return f"{self.product.name} - {self.name}"
+
+
+class VariantImage(models.Model):
+    variant = models.ForeignKey(Variant, related_name='images', on_delete=models.CASCADE)
+    image = models.FileField(upload_to="variant_images/")
 
 class Order(models.Model):
     customer = models.ForeignKey(Customer, related_name='orders', on_delete=models.CASCADE)

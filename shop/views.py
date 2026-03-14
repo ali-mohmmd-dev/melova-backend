@@ -8,18 +8,16 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-
-
-
 from rest_framework import permissions
 
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.all().prefetch_related('variants')
+    queryset = Product.objects.all().prefetch_related('variants', 'variants__images')
     serializer_class = ProductSerializer
 
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [permissions.IsAdminUser()]
+            # return [permissions.IsAdminUser()]
+            pass
         return [permissions.AllowAny()]
 
 class OrderViewSet(viewsets.ModelViewSet):

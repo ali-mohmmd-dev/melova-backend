@@ -16,15 +16,23 @@ from .serializers import (
     UserSerializer,
 )
 
-User = get_user_model()
+User = get_user_model()    
 
 
 def get_tokens_for_user(user):
     """Generate JWT access + refresh token pair for a user."""
     refresh = RefreshToken.for_user(user)
+    
+    # Add custom claims to the access token
+    access_token = refresh.access_token
+    access_token["email"] = user.email
+    access_token["name"] = user.name
+    access_token["is_staff"] = user.is_staff
+    access_token["is_superuser"] = user.is_superuser
+    
     return {
         "refresh": str(refresh),
-        "access": str(refresh.access_token),
+        "access": str(access_token),
     }
 
 

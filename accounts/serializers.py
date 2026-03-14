@@ -7,11 +7,9 @@ User = get_user_model()
 
 
 class UserSerializer(serializers.ModelSerializer):
-    """Read-only serialiser for returning user profile data."""
-
     class Meta:
         model = User
-        fields = ["id", "email", "name", "avatar", "is_google_user"]
+        fields = ["id", "email", "name", "avatar", "is_google_user", "is_superuser", "is_staff"]
         read_only_fields = fields
 
 
@@ -49,9 +47,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-        # Add custom claims
         token["email"] = user.email
         token["name"] = user.name
+        token["is_staff"] = user.is_staff          
+        token["is_superuser"] = user.is_superuser  
         return token
 
     def validate(self, attrs):
