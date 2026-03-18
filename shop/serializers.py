@@ -1,5 +1,7 @@
+import razorpay
+from django.conf import settings
 from rest_framework import serializers
-from .models import Product, Variant, VariantImage, Order, Customer
+from .models import Product, Variant, VariantImage, Order, OrderItem, Customer
 
 
 def _media_url(serializer, file_field):
@@ -95,7 +97,7 @@ class ProductSerializer(serializers.ModelSerializer):
     price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     variants = VariantSerializer(many=True)
 
-    class Meta:
+    class Meta: 
         model = Product
         fields = ['id', 'title', 'introduction', 'details', 'image', 'price', 'variants']
 
@@ -116,11 +118,8 @@ class ProductSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         variants_data = validated_data.pop('variants', [])
         self._inject_variant_files_from_request(variants_data)
-        validated_data['name'] = validated_data.pop('name', '')
-        validated_data['intro'] = validated_data.pop('intro', '')
-        validated_data['description'] = validated_data.pop('description', '')
-        first_price = next((v.get('price') for v in variants_data if v.get('price') is not None), None)
-        validated_data['price'] = first_price or 0
+        # The Product model doesn't have a price field; prices are on variants.
+        # title, introduction, details are already mapped to name, intro, description via 'source'
         product = Product.objects.create(**validated_data)
         for v in variants_data:
             images_data = v.pop('images', [])
@@ -142,12 +141,7 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         variants_data = validated_data.pop('variants', None)
-        if 'name' in validated_data:
-            instance.name = validated_data.pop('name')
-        if 'intro' in validated_data:
-            instance.intro = validated_data.pop('intro')
-        if 'description' in validated_data:
-            instance.description = validated_data.pop('description')
+        # title, introduction, details are already mapped to name, intro, description via 'source'
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
@@ -172,10 +166,78 @@ class ProductSerializer(serializers.ModelSerializer):
                 instance.save(update_fields=['image'])
         return instance
 
+class OrderItemSerializer(serializers.ModelSerializer):
+    variant_name = serializers.CharField(source='variant.name', read_only=True)
+    product_name = serializers.CharField(source='variant.product.name', read_only=True)
+
+    class Meta:
+        model = OrderItem
+        fields = ['id', 'variant', 'variant_name', 'product_name', 'quantity', 'price_at_purchase']
+        read_only_fields = ['price_at_purchase']
+
+
 class OrderSerializer(serializers.ModelSerializer):
-    customer_name = serializers.CharField(source='customer.name', read_only=True)
-    email = serializers.EmailField(source='customer.email', read_only=True)
+    items = OrderItemSerializer(many=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    razorpay_order_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
-        fields = ['id', 'customer_name', 'email', 'total', 'created_at']
+        fields = [
+            'id', 'user_email', 'total', 'created_at', 'items',
+            'full_name', 'email', 'phone', 'address', 'city', 'state', 'pincode',
+            'status', 'razorpay_order_id'
+        ]
+        read_only_fields = ['total', 'created_at', 'status']
+
+    def get_razorpay_order_id(self, obj):
+        # Return the razorpay_order_id from the associated payment
+        payment = obj.payments.first()
+        return payment.razorpay_order_id if payment else None
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        request = self.context.get('request')
+        user = request.user if request else None
+        
+        if not user or not user.is_authenticated:
+            raise serializers.ValidationError("Authentication required to place an order.")
+
+        # Calculate total and prepare items
+        total = 0
+        order_items_to_create = []
+        for item_data in items_data:
+            variant = item_data['variant']
+            quantity = item_data['quantity']
+            price = variant.price
+            total += price * quantity
+            order_items_to_create.append({
+                'variant': variant,
+                'quantity': quantity,
+                'price_at_purchase': price
+            })
+            
+        order = Order.objects.create(user=user, total=total, **validated_data)
+        
+        for item_info in order_items_to_create:
+            OrderItem.objects.create(order=order, **item_info)
+
+        # Razorpay Integration
+        client = razorpay.Client(auth=(settings.RAZOR_KEY_ID, settings.RAZOR_KEY_SECRET))
+        razorpay_order = client.order.create({
+            "amount": int(total * 100),  # Amount in paise
+            "currency": "INR",
+            "receipt": f"order_{order.id}",
+            "payment_capture": 1
+        })
+
+        # Create Payment record
+        from .models import Payment
+        Payment.objects.create(
+            order=order,
+            razorpay_order_id=razorpay_order['id'],
+            amount=int(total),
+            status='Created'
+        )
+            
+        return order

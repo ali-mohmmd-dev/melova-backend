@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Product, Variant, Order, Payment, Customer
+from .models import Product, Variant, Order, OrderItem, Payment, Customer
 
 class VariantInline(admin.TabularInline):
     model = Variant
@@ -8,8 +8,8 @@ class VariantInline(admin.TabularInline):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'price', 'get_variants_count')
-    list_filter = ('price',)
+    list_display = ('id', 'name', 'get_variants_count')
+    list_filter = ('name',)
     search_fields = ('name', 'intro', 'description')
     inlines = [VariantInline]
     
@@ -36,16 +36,26 @@ class CustomerAdmin(admin.ModelAdmin):
         }),
     )
 
+class OrderItemInline(admin.TabularInline):
+    model = OrderItem
+    extra = 0
+    readonly_fields = ('variant', 'quantity', 'price_at_purchase')
+
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ('id', 'get_customer_name', 'total', 'created_at')
+    list_display = ('id', 'user', 'total', 'created_at')
     list_filter = ('created_at',)
-    search_fields = ('customer__name', 'customer__email')
-    readonly_fields = ('created_at',)
-    
-    def get_customer_name(self, obj):
-        return obj.customer.name
-    get_customer_name.short_description = 'Customer'
+    search_fields = ('user__email', 'full_name', 'email')
+    readonly_fields = ('created_at', 'total')
+    inlines = [OrderItemInline]
+    fieldsets = (
+        ('Order Information', {
+            'fields': ('user', 'total', 'created_at')
+        }),
+        ('Shipping Details', {
+            'fields': ('full_name', 'email', 'phone', 'address', 'city', 'state', 'pincode')
+        }),
+    )
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):

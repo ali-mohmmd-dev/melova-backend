@@ -10,4 +10,5 @@ router.register(r'customers', views.CustomerViewSet, basename='customer')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('verify-payment/', views.PaymentVerificationView.as_view(), name='verify-payment'),
 ]
