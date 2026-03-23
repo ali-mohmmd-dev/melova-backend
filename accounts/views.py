@@ -1,6 +1,7 @@
 import os
 
 from django.contrib.auth import get_user_model
+from django.db.models import Count, Sum, Max
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from rest_framework import generics, permissions, status
@@ -14,6 +15,7 @@ from .serializers import (
     GoogleAuthSerializer,
     RegisterSerializer,
     UserSerializer,
+    CustomerListSerializer,
 )
 
 User = get_user_model()    
@@ -193,4 +195,25 @@ class GoogleLoginView(APIView):
                 **tokens,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+class CustomerListView(generics.ListAPIView):
+    """
+    GET /api/auth/customers/
+    Admin only: List all customers (non-staff users) with order stats.
+    """
+
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = CustomerListSerializer
+
+    def get_queryset(self):
+        return (
+            User.objects.filter(is_staff=False)
+            .annotate(
+                order_count=Count("orders", distinct=True),
+                total_spent=Sum("orders__total"),
+                last_order_date=Max("orders__created_at"),
+            )
+            .order_by("-date_joined")
         )

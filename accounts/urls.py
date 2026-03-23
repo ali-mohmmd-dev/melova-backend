@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
-from .views import GoogleLoginView, LoginView, LogoutView, RegisterView, UserProfileView
+from .views import GoogleLoginView, LoginView, LogoutView, RegisterView, UserProfileView, CustomerListView
 
 urlpatterns = [
     # Standard JWT auth
@@ -12,4 +12,6 @@ urlpatterns = [
     path("me/", UserProfileView.as_view(), name="auth_me"),
     # Google OAuth
     path("google/", GoogleLoginView.as_view(), name="auth_google"),
+    # Admin
+    path("customers/", CustomerListView.as_view(), name="admin_customers"),
 ]

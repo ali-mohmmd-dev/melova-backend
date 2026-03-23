@@ -64,3 +64,28 @@ class GoogleAuthSerializer(serializers.Serializer):
     """Accepts a Google id_token from the frontend and verifies it."""
 
     id_token = serializers.CharField(required=True)
+
+
+class CustomerListSerializer(serializers.ModelSerializer):
+    """Returns a summary of a customer (User) for admin listing."""
+
+    order_count = serializers.IntegerField(read_only=True)
+    total_spent = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    last_order_date = serializers.DateTimeField(read_only=True)
+    created_at = serializers.DateTimeField(source="date_joined", read_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "email",
+            "name",
+            "phone",
+            "order_count",
+            "total_spent",
+            "last_order_date",
+            "is_google_user",
+            "date_joined",
+            "created_at",
+        ]
+        read_only_fields = fields

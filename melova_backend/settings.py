@@ -7,6 +7,7 @@ from pathlib import Path
 
 import dotenv
 import os
+from django.core.exceptions import ImproperlyConfigured
 
 # Load .env file
 dotenv.load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -18,12 +19,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------
 # Security
 # ---------------------------------------------------------------------------
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY",
-    "django-insecure-43x+ins+@l4!&3=(&e1^s^e777l69hqig!wv8oo67#gu9zn934",
-)
-DEBUG = os.environ.get("DEBUG", "True") == "True"
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",") if os.environ.get("ALLOWED_HOSTS") else ["*"]
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise ImproperlyConfigured("SECRET_KEY environment variable is required.")
+
+DEBUG = os.environ.get("DEBUG", "False") == "True"
+
+if os.environ.get("ALLOWED_HOSTS"):
+    ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",")
+else:
+    # Safer defaults for dev; require explicit ALLOWED_HOSTS for production.
+    ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +51,6 @@ INSTALLED_APPS = [
     # Local apps
     "accounts",
     "shop",
-    "payments",
 ]
 
 MIDDLEWARE = [

@@ -1,7 +1,7 @@
 import razorpay
 from django.conf import settings
 from rest_framework import serializers
-from .models import Product, Variant, VariantImage, Order, OrderItem, Customer
+from .models import Product, Variant, VariantImage, Order, OrderItem, Customer, Cart, CartItem
 
 
 def _media_url(serializer, file_field):
@@ -50,6 +50,7 @@ class VariantImagesField(serializers.Field):
 
 
 class VariantSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(required=False, allow_blank=True)
     weight = serializers.IntegerField(source='gram', min_value=0)
     images = VariantImagesField(required=False, default=list)
 
@@ -169,15 +170,36 @@ class ProductSerializer(serializers.ModelSerializer):
 class OrderItemSerializer(serializers.ModelSerializer):
     variant_name = serializers.CharField(source='variant.name', read_only=True)
     product_name = serializers.CharField(source='variant.product.name', read_only=True)
+    product = serializers.IntegerField(source='variant.product.id', read_only=True)
+    price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, source='price_at_purchase', read_only=True
+    )
+    product_image = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderItem
-        fields = ['id', 'variant', 'variant_name', 'product_name', 'quantity', 'price_at_purchase']
-        read_only_fields = ['price_at_purchase']
+        fields = [
+            'id',
+            'variant',
+            'product',
+            'variant_name',
+            'product_name',
+            'quantity',
+            'price',
+            'price_at_purchase',
+            'product_image',
+        ]
+        read_only_fields = ['price_at_purchase', 'price', 'product']
+
+    def get_product_image(self, obj):
+        # Provide an absolute media URL for the product image.
+        if not obj.variant or not obj.variant.product or not obj.variant.product.image:
+            return None
+        return _media_url(self, obj.variant.product.image)
 
 
 class OrderSerializer(serializers.ModelSerializer):
-    items = OrderItemSerializer(many=True)
+    items = OrderItemSerializer(many=True, read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
     razorpay_order_id = serializers.SerializerMethodField()
 
@@ -188,7 +210,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'full_name', 'email', 'phone', 'address', 'city', 'state', 'pincode',
             'status', 'razorpay_order_id'
         ]
-        read_only_fields = ['total', 'created_at', 'status']
+        read_only_fields = ['total', 'created_at']
 
     def get_razorpay_order_id(self, obj):
         # Return the razorpay_order_id from the associated payment
@@ -241,3 +263,27 @@ class OrderSerializer(serializers.ModelSerializer):
         )
             
         return order
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    variant_details = VariantSerializer(source='variant', read_only=True)
+    subtotal = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CartItem
+        fields = ['id', 'variant', 'variant_details', 'quantity', 'subtotal']
+
+    def get_subtotal(self, obj):
+        return obj.variant.price * obj.quantity
+
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+    total_price = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Cart
+        fields = ['id', 'user', 'items', 'total_price', 'created_at', 'updated_at']
+
+    def get_total_price(self, obj):
+        return sum(item.variant.price * item.quantity for item in obj.items.all())

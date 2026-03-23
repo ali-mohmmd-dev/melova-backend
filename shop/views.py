@@ -8,8 +8,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from .models import Product, Order, Customer, Payment
-from .serializers import ProductSerializer, OrderSerializer, CustomerSerializer
+from .models import Product, Order, Customer, Payment, Cart, CartItem, Variant
+from .serializers import ProductSerializer, OrderSerializer, CustomerSerializer, CartSerializer, CartItemSerializer
+from django.shortcuts import get_object_or_404
+from rest_framework.decorators import action
 
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all().prefetch_related('variants', 'variants__images')
@@ -43,9 +45,13 @@ class ProductViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         data = request.data.dict() if hasattr(request.data, 'dict') else dict(request.data)
 
-        # Remove variant keys from flat data
-        top_level = {k: v for k, v in data.items() if not k.startswith('variants[')}
-        top_level['variants'] = self._parse_variants_from_request(data, request.FILES)
+        # If variants is already in request.data (e.g. JSON request), use it
+        if 'variants' in request.data and isinstance(request.data['variants'], list):
+            top_level = request.data
+        else:
+            # Remove variant keys from flat data
+            top_level = {k: v for k, v in data.items() if not k.startswith('variants[')}
+            top_level['variants'] = self._parse_variants_from_request(data, request.FILES)
 
         serializer = self.get_serializer(data=top_level)
         serializer.is_valid(raise_exception=True)
@@ -61,9 +67,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         data = request.data.dict() if hasattr(request.data, 'dict') else dict(request.data)
 
-        top_level = {k: v for k, v in data.items() if not k.startswith('variants[')}
-        top_level['variants'] = self._parse_variants_from_request(data, request.FILES)
-
+        if 'variants' in request.data and isinstance(request.data['variants'], list):
+            top_level = request.data
+        else:
+            top_level = {k: v for k, v in data.items() if not k.startswith('variants[')}
+            top_level['variants'] = self._parse_variants_from_request(data, request.FILES)
+        
         serializer = self.get_serializer(instance, data=top_level, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
@@ -82,14 +91,23 @@ class OrderViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = OrderSerializer
     
+    def get_permissions(self):
+        # Only staff/admin can create/update orders (including status changes).
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAdminUser()]
+        return [permissions.IsAuthenticated()]
+
     def get_queryset(self):
-        # Only return orders belonging to the logged-in user
-        return Order.objects.filter(user=self.request.user).prefetch_related('items', 'items__variant', 'items__variant__product')
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return Order.objects.all().prefetch_related('items', 'items__variant', 'items__variant__product').order_by('-created_at')
+        return Order.objects.filter(user=user).prefetch_related('items', 'items__variant', 'items__variant__product').order_by('-created_at')
 
 
 class CustomerViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
+    permission_classes = [permissions.IsAdminUser()]
 
 
 class PaymentVerificationView(APIView):
@@ -110,14 +128,23 @@ class PaymentVerificationView(APIView):
             })
 
             # Update the payment record
-            payment = Payment.objects.get(razorpay_order_id=razorpay_order_id)
+            payment = Payment.objects.select_related("order").get(razorpay_order_id=razorpay_order_id)
+            order = payment.order
+
+            # Ownership check: normal users can only verify their own orders.
+            if not (request.user.is_staff or request.user.is_superuser) and order.user_id != request.user.id:
+                return Response({"status": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+            # Idempotency: if it's already verified, keep response contract stable.
+            if payment.status == "Success" and order.status == "Paid":
+                return Response({'status': 'Payment Successful'}, status=status.HTTP_200_OK)
+
             payment.razorpay_payment_id = razorpay_payment_id
             payment.razorpay_signature = razorpay_signature
             payment.status = 'Success'
             payment.save()
 
             # Update the associated order status
-            order = payment.order
             order.status = 'Paid'
             order.save()
 
@@ -127,3 +154,93 @@ class PaymentVerificationView(APIView):
             return Response({'status': 'Signature Verification Failed'}, status=status.HTTP_400_BAD_REQUEST)
         except Payment.DoesNotExist:
             return Response({'status': 'Payment Record Not Found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class CartViewSet(viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = CartSerializer
+
+    def get_cart(self):
+        cart, _ = Cart.objects.get_or_create(user=self.request.user)
+        return cart
+
+    def list(self, request):
+        cart = self.get_cart()
+        serializer = self.get_serializer(cart)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'])
+    def add_item(self, request):
+        variant_id = request.data.get('variant_id')
+        quantity = int(request.data.get('quantity', 1))
+        
+        variant = get_object_or_404(Variant, id=variant_id)
+        cart = self.get_cart()
+        
+        cart_item, created = CartItem.objects.get_or_create(cart=cart, variant=variant)
+        if not created:
+            cart_item.quantity += quantity
+        else:
+            cart_item.quantity = quantity
+        cart_item.save()
+        
+        return Response(CartSerializer(cart).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'])
+    def update_item(self, request):
+        variant_id = request.data.get('variant_id')
+        quantity = int(request.data.get('quantity'))
+        
+        cart = self.get_cart()
+        cart_item = get_object_or_404(CartItem, cart=cart, variant_id=variant_id)
+        
+        if quantity > 0:
+            cart_item.quantity = quantity
+            cart_item.save()
+        else:
+            cart_item.delete()
+            
+        return Response(CartSerializer(cart).data)
+
+    @action(detail=False, methods=['post'])
+    def remove_item(self, request):
+        variant_id = request.data.get('variant_id')
+        cart = self.get_cart()
+        cart_item = get_object_or_404(CartItem, cart=cart, variant_id=variant_id)
+        cart_item.delete()
+        return Response(CartSerializer(cart).data)
+
+    @action(detail=False, methods=['post'])
+    def clear(self, request):
+        cart = self.get_cart()
+        cart.items.all().delete()
+        return Response(CartSerializer(cart).data)
+
+    @action(detail=False, methods=['post'])
+    def checkout(self, request):
+        cart = self.get_cart()
+        items = cart.items.all()
+        
+        if not items.exists():
+            return Response({'error': 'Cart is empty'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Prepare order items for the serializer
+        order_items = []
+        for item in items:
+            order_items.append({
+                'variant': item.variant.id,
+                'quantity': item.quantity
+            })
+            
+        # Ensure order_data is a proper dict (not a QueryDict that might reject list assignment)
+        order_data = request.data.dict() if hasattr(request.data, 'dict') else dict(request.data)
+        order_data['items'] = order_items
+        
+        serializer = OrderSerializer(data=order_data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        order = serializer.save()
+        
+        # Clear cart after successful order creation
+        items.delete()
+        
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
