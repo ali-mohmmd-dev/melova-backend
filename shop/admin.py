@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Product, Variant, Order, OrderItem, Payment, Customer
+from .models import Product, Variant, Order, OrderItem, Payment
 
 class VariantInline(admin.TabularInline):
     model = Variant
@@ -16,25 +16,6 @@ class ProductAdmin(admin.ModelAdmin):
     def get_variants_count(self, obj):
         return obj.variants.count()
     get_variants_count.short_description = 'Variants'
-
-@admin.register(Customer)
-class CustomerAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'email', 'phone', 'city', 'created_at')
-    list_filter = ('city', 'state', 'country', 'created_at')
-    search_fields = ('name', 'email', 'phone', 'address')
-    readonly_fields = ('created_at', 'updated_at')
-    fieldsets = (
-        ('Personal Information', {
-            'fields': ('name', 'email', 'phone')
-        }),
-        ('Address', {
-            'fields': ('address', 'city', 'state', 'country', 'pincode')
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
 
 class OrderItemInline(admin.TabularInline):
     model = OrderItem

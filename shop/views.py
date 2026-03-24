@@ -8,8 +8,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from .models import Product, Order, Customer, Payment, Cart, CartItem, Variant
-from .serializers import ProductSerializer, OrderSerializer, CustomerSerializer, CartSerializer, CartItemSerializer
+from .models import Product, Order, Payment, Cart, CartItem, Variant
+from .serializers import ProductSerializer, OrderSerializer, CartSerializer, CartItemSerializer
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import action
 
@@ -104,10 +104,6 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Order.objects.filter(user=user).prefetch_related('items', 'items__variant', 'items__variant__product').order_by('-created_at')
 
 
-class CustomerViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Customer.objects.all()
-    serializer_class = CustomerSerializer
-    permission_classes = [permissions.IsAdminUser()]
 
 
 class PaymentVerificationView(APIView):
@@ -219,28 +215,55 @@ class CartViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=['post'])
     def checkout(self, request):
         cart = self.get_cart()
-        items = cart.items.all()
+        cart_items = cart.items.select_related('variant').all()
         
-        if not items.exists():
+        if not cart_items.exists():
             return Response({'error': 'Cart is empty'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Prepare order items for the serializer
-        order_items = []
-        for item in items:
-            order_items.append({
-                'variant': item.variant.id,
-                'quantity': item.quantity
-            })
-            
-        # Ensure order_data is a proper dict (not a QueryDict that might reject list assignment)
+
+        # Validate address/contact fields via the serializer
         order_data = request.data.dict() if hasattr(request.data, 'dict') else dict(request.data)
-        order_data['items'] = order_items
-        
         serializer = OrderSerializer(data=order_data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        order = serializer.save()
-        
+
+        # Build order and items directly (items is read_only on the serializer)
+        total = 0
+        order_items_to_create = []
+        for ci in cart_items:
+            price = ci.variant.price
+            total += price * ci.quantity
+            order_items_to_create.append({
+                'variant': ci.variant,
+                'quantity': ci.quantity,
+                'price_at_purchase': price,
+            })
+
+        from .models import Order, OrderItem, Payment
+        order = Order.objects.create(
+            user=request.user,
+            total=total,
+            **serializer.validated_data,
+        )
+        for item_info in order_items_to_create:
+            OrderItem.objects.create(order=order, **item_info)
+
+        # Razorpay Integration
+        client = razorpay.Client(auth=(settings.RAZOR_KEY_ID, settings.RAZOR_KEY_SECRET))
+        razorpay_order = client.order.create({
+            "amount": int(total * 100),
+            "currency": "INR",
+            "receipt": f"order_{order.id}",
+            "payment_capture": 1,
+        })
+        Payment.objects.create(
+            order=order,
+            razorpay_order_id=razorpay_order['id'],
+            amount=int(total),
+            status='Created',
+        )
+
         # Clear cart after successful order creation
-        items.delete()
-        
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        cart_items.delete()
+
+        # Re-serialize the created order for the response
+        response_serializer = OrderSerializer(order, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)

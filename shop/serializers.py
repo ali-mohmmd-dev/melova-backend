@@ -1,7 +1,5 @@
-import razorpay
-from django.conf import settings
 from rest_framework import serializers
-from .models import Product, Variant, VariantImage, Order, OrderItem, Customer, Cart, CartItem
+from .models import Product, Variant, VariantImage, Order, OrderItem, Cart, CartItem
 
 
 def _media_url(serializer, file_field):
@@ -16,11 +14,6 @@ def _media_url(serializer, file_field):
         return request.build_absolute_uri(url)
     return url
 
-
-class CustomerSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Customer
-        fields = ['id', 'name', 'email', 'phone', 'address', 'city', 'state', 'country', 'pincode', 'created_at']
 
 
 class VariantImageSerializer(serializers.ModelSerializer):
@@ -95,7 +88,7 @@ class ProductSerializer(serializers.ModelSerializer):
     introduction = serializers.CharField(source='intro', required=False, allow_blank=True)
     details = serializers.CharField(source='description', required=False, allow_blank=True)
     image = serializers.SerializerMethodField()
-    price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    price = serializers.SerializerMethodField()
     variants = VariantSerializer(many=True)
 
     class Meta: 
@@ -104,6 +97,11 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def get_image(self, obj):
         return _media_url(self, obj.image)
+
+    def get_price(self, obj):
+        """Return the lowest variant price as the product's display price."""
+        first_variant = obj.variants.order_by('price').first()
+        return float(first_variant.price) if first_variant else None
 
     def _inject_variant_files_from_request(self, variants_data):
         request = self.context.get('request')
@@ -216,53 +214,6 @@ class OrderSerializer(serializers.ModelSerializer):
         # Return the razorpay_order_id from the associated payment
         payment = obj.payments.first()
         return payment.razorpay_order_id if payment else None
-
-    def create(self, validated_data):
-        items_data = validated_data.pop('items')
-        request = self.context.get('request')
-        user = request.user if request else None
-        
-        if not user or not user.is_authenticated:
-            raise serializers.ValidationError("Authentication required to place an order.")
-
-        # Calculate total and prepare items
-        total = 0
-        order_items_to_create = []
-        for item_data in items_data:
-            variant = item_data['variant']
-            quantity = item_data['quantity']
-            price = variant.price
-            total += price * quantity
-            order_items_to_create.append({
-                'variant': variant,
-                'quantity': quantity,
-                'price_at_purchase': price
-            })
-            
-        order = Order.objects.create(user=user, total=total, **validated_data)
-        
-        for item_info in order_items_to_create:
-            OrderItem.objects.create(order=order, **item_info)
-
-        # Razorpay Integration
-        client = razorpay.Client(auth=(settings.RAZOR_KEY_ID, settings.RAZOR_KEY_SECRET))
-        razorpay_order = client.order.create({
-            "amount": int(total * 100),  # Amount in paise
-            "currency": "INR",
-            "receipt": f"order_{order.id}",
-            "payment_capture": 1
-        })
-
-        # Create Payment record
-        from .models import Payment
-        Payment.objects.create(
-            order=order,
-            razorpay_order_id=razorpay_order['id'],
-            amount=int(total),
-            status='Created'
-        )
-            
-        return order
 
 
 class CartItemSerializer(serializers.ModelSerializer):
