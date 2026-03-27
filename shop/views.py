@@ -100,8 +100,15 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.is_staff or user.is_superuser:
-            return Order.objects.all().prefetch_related('items', 'items__variant', 'items__variant__product').order_by('-created_at')
+            return Order.objects.exclude(status='Pending').prefetch_related('items', 'items__variant', 'items__variant__product').order_by('-created_at')
         return Order.objects.filter(user=user).prefetch_related('items', 'items__variant', 'items__variant__product').order_by('-created_at')
+
+    @action(detail=False, methods=['get'])
+    def my_orders(self, request):
+        user = request.user
+        orders = Order.objects.filter(user=user, status='Paid').prefetch_related('items', 'items__variant', 'items__variant__product').order_by('-created_at')
+        serializer = self.get_serializer(orders, many=True)
+        return Response(serializer.data)
 
 
 

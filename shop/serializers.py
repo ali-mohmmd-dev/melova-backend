@@ -37,8 +37,10 @@ class VariantImagesField(serializers.Field):
         return VariantImageSerializer(value.all(), many=True, context=context).data
 
     def to_internal_value(self, data):
-        if isinstance(data, list):  
-            return data  # list of file objects or empty
+        if isinstance(data, list):
+            return data
+        elif data:
+            return [data]  # handle single file
         return []
 
 
@@ -73,7 +75,6 @@ class VariantSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         if images_data is not None:
-            instance.images.all().delete()
             for f in images_data:
                 if hasattr(f, 'read'):
                     vi = VariantImage.objects.create(variant=instance, image=f)
@@ -96,7 +97,13 @@ class ProductSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'introduction', 'details', 'image', 'price', 'variants']
 
     def get_image(self, obj):
-        return _media_url(self, obj.image)
+        image = obj.image
+        if not image:
+            # Fallback to first variant's image if product main image is missing
+            first_variant = obj.variants.first()
+            if first_variant:
+                image = first_variant.image
+        return _media_url(self, image)
 
     def get_price(self, obj):
         """Return the lowest variant price as the product's display price."""
@@ -146,19 +153,37 @@ class ProductSerializer(serializers.ModelSerializer):
         instance.save()
         if variants_data is not None:
             self._inject_variant_files_from_request(variants_data)
-            instance.variants.all().delete()
+            existing_variants = {v.id: v for v in instance.variants.all()}
+            updated_variant_ids = []
+
             for v in variants_data:
                 images_data = v.pop('images', [])
                 gram = v.pop('gram', v.pop('weight', 0))
                 v['gram'] = gram
                 v.setdefault('name', f"{gram}g")
-                variant = Variant.objects.create(product=instance, **v)
+                variant_id = v.pop('id', None)
+
+                if variant_id and int(variant_id) in existing_variants:
+                    variant = existing_variants[int(variant_id)]
+                    for attr, value in v.items():
+                        setattr(variant, attr, value)
+                    variant.save()
+                    updated_variant_ids.append(variant.id)
+                else:
+                    variant = Variant.objects.create(product=instance, **v)
+                    updated_variant_ids.append(variant.id)
+
                 for f in images_data:
                     if hasattr(f, 'read'):
                         vi = VariantImage.objects.create(variant=variant, image=f)
                         if not variant.image:
                             variant.image = vi.image
                             variant.save(update_fields=['image'])
+            
+            for v_id, v_obj in existing_variants.items():
+                if v_id not in updated_variant_ids:
+                    v_obj.delete()
+
             first_variant = instance.variants.first()
             if first_variant and first_variant.image and not instance.image:
                 instance.image = first_variant.image
