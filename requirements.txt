@@ -11,3 +11,4 @@ sqlparse==0.5.5
 tzdata==2025.3
 razorpay==2.0.1
 Pillow==12.1.1
+requests==2.32.3

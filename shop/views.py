@@ -90,7 +90,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 class OrderViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = OrderSerializer
-    
+
     def get_permissions(self):
         # Only staff/admin can create/update orders (including status changes).
         if self.action in ["create", "update", "partial_update", "destroy"]:

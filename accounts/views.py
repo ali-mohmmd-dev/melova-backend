@@ -156,19 +156,12 @@ class GoogleLoginView(APIView):
             )
 
         google_id = idinfo.get("sub")
-        email = idinfo.get("email")
         name = idinfo.get("name", "")
         avatar = idinfo.get("picture", "")
 
-        if not email:
-            return Response(
-                {"detail": "Google account has no email address."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         # Get or create the user
         user, created = User.objects.get_or_create(
-            email=email,
+            email=idinfo.get("email"),
             defaults={
                 "name": name,
                 "avatar": avatar,
@@ -209,7 +202,7 @@ class CustomerListView(generics.ListAPIView):
 
     def get_queryset(self):
         return (
-            User.objects.filter(is_staff=False)
+            User.objects.filter(is_staff=False, is_superuser=False)
             .annotate(
                 order_count=Count("orders", distinct=True),
                 total_spent=Sum("orders__total"),
